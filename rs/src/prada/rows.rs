@@ -1,4 +1,4 @@
-use crate::prada::{architecture::PRADAArchitecture, program::Address, BitwiseOperand};
+use crate::prada::{architecture::{PRADAArchitecture, RowAddress}, BitwiseOperand};
 
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Signal};
 use rustc_hash::FxHashMap;
@@ -47,22 +47,6 @@ impl<'a> Rows<'a> {
     }
 
     fn add_leafs(&mut self, ntk: &impl NetworkWithBackwardEdges<Node = Mig>) {
-        let leafs = ntk.leafs();
-        self.rows.reserve(leafs.size_hint().0);
-        for id in leafs {
-            let node = ntk.node(id);
-            match node {
-                Mig::Input(i) => {
-                    self.set_empty_row_signal(Row::In(i), Signal::new(id, false));
-                }
-                Mig::False => {
-                    let signal = Signal::new(id, false);
-                    self.set_empty_row_signal(Row::Const(false), signal);
-                    self.set_empty_row_signal(Row::Const(true), signal.invert());
-                }
-                _ => unreachable!("leaf node should be either an input or a constant"),
-            };
-        }
     }
 
     /// Returns the current signal of the given row.
@@ -73,7 +57,7 @@ impl<'a> Rows<'a> {
     /// Returns the signal of the given address. That is, if it is a DCC address the signal of the
     /// respective DCC row, but inverted if the address refers to the inverted row, otherwise the
     /// signal of the row of the address.
-    pub fn get_address_signal(&self, address: Address) -> Option<Signal> {
+    pub fn get_address_signal(&self, address: RowAddress) -> Option<Signal> {
         todo!()
         // TODO
     }
@@ -109,7 +93,7 @@ impl<'a> Rows<'a> {
     /// but inverted iff the operand is inverted.
     ///
     /// Returns the signal of the operand previous to this operation if it was changed.
-    pub fn set_signal(&mut self, address: Address, signal: Signal) -> Option<Signal> {
+    pub fn set_signal(&mut self, address: RowAddress, signal: Signal) -> Option<Signal> {
         todo!()
     }
 

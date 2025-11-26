@@ -1,10 +1,10 @@
 use super::{
     architecture::{PRADAArchitecture},
 };
-use crate::prada::{architecture::{RowAddress, SubarrayId}, program::{Address, Program, ProgramState}, rows::Row, BitwiseOperand};
+use crate::prada::{architecture::{RowAddress, SubarrayId, ARCHITECTURE, ROWS_PER_SUBARRAY}, program::{Instruction, Program}, rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{cmp::max, collections::HashMap};
+use std::{cmp::max, collections::HashMap, u64::MAX};
 
 /// Stores the current state of a row at a concrete compilations step
 #[derive(Default)] // by default not a compute_row, no live-value and no constant inside row
@@ -17,29 +17,38 @@ pub struct RowState {
     constant: Option<usize>,
 }
 
-pub struct CompilationState<'a, 'n, N> {
+pub struct CompilationState<'n, N> {
     /// For each row in the dram-module store its state (whether it's a compute row or if not whether/which value is stored inside it
     dram_state: HashMap<RowAddress, RowState>,
     /// For each subarray it stores the row in which the `Signal` is located
-    value_states: HashMap<(Signal, SubarrayId), RowAddress>,
+    /// Assumption: currently only uses a single subarray
+    value_states: HashMap<Signal, RowAddress>,
+    /// For each Subarray store which rows are free (and hence can be used for storing values)
+    /// - for now we'll limit ourselves to a single subarray
+    free_rows_per_subarray: Vec<RowAddress>,
 
     network: &'n N,
+    program: Vec<Instruction>,
     /// contains all not yet computed network nodes that can be immediately computed (i.e. all
     /// inputs of the node are already computed)
     candidates: FxHashSet<(Id, Mig)>,
-    program: ProgramState<'a>,
 
     outputs: FxHashSet<Id>,
     leftover_use_count: FxHashMap<Id, usize>,
 }
 
 /// Main function
+/// - called with all initial candidates (=leaves) already placed in some rows
 pub fn compile<'a>(
     architecture: &'a PRADAArchitecture,
     network: &impl NetworkWithBackwardEdges<Node = Mig>,
 ) -> Result<Program<'a>, &'static str> {
+
     let mut state = CompilationState::new(architecture, network);
     let mut max_cand_size = 0;
+
+    dbg!("{:?}", state.value_states.clone());
+
     while !state.candidates.is_empty() {
         max_cand_size = max(max_cand_size, state.candidates.len());
         let (id, node, _, _, _) = state
@@ -53,11 +62,8 @@ pub fn compile<'a>(
                     .inputs()
                     .iter()
                     .map(|signal| {
-                        let present = state
-                            .program
-                            .rows()
-                            .get_rows(*signal)
-                            .any(|row| matches!(row, Row::Bitwise(_)));
+                        // TODO: check if this is legit
+                        let present = state.value_states.contains_key(signal);
                         !present as u8
                     })
                     .sum::<u8>();
@@ -65,45 +71,63 @@ pub fn compile<'a>(
             })
             .min_by_key(|(_, _, not_present, outputs, output)| (*not_present, *outputs, !output))
             .unwrap();
+
+        // start computation from outputs (->unused computations are ignored automatically)
         if state.outputs.contains(&id) {
             for (output, signal) in network.outputs().enumerate() {
                 if signal.node_id() != id {
                     continue;
                 }
                 if signal.is_inverted() {
+                    let backup_row = state.free_rows_per_subarray.pop().expect("No empty rows anymore");
+                    let orig_row = *state.value_states.get(&signal.invert()).expect("Non-inverted version of signal isnt present too");
+
+                    // for now let's save the original (non-inverted) value in another row - TODO:
+                    // check if signal is ever needed again and only then do this
+                    state.program.push(Instruction::AAPRowCopy(orig_row, backup_row)); // first save in backup_row
+                    state.program.push(Instruction::N(backup_row)); // then negate
+                    state.value_states.insert(signal, orig_row); // inv signal is now stored where non-inv sig was previously
+                    state.dram_state.insert(orig_row, RowState{ is_compute_row: false, live_value: Some(signal.invert()), constant: None});
+                    state.dram_state.insert(backup_row, RowState{ is_compute_row: false, live_value: Some(signal), constant: None});
+
+                    let row_addr = state.value_states.get(&signal).expect("Signal is not computed...");
                     state.compute(id, node, None);
-                    state.program.signal_copy(
-                        signal,
-                        Address::Out(output as u64),
-                    );
                 } else {
-                    state.compute(id, node, Some(Address::Out(output as u64)));
+                    state.compute(id, node, Some(RowAddress(output as u64)));
                 }
             }
             state.outputs.remove(&id);
+
+            // free rows if node isn't needed for further computations
             let leftover_uses = *state.leftover_use_count(id);
             if leftover_uses == 1 {
-                state.program.free_id_rows(id);
+                for signal in network.node(id).inputs() {
+                    let row= state.value_states.remove(signal);
+                    if let Some(row_addr) = row {
+                        state.dram_state.remove(&row_addr);
+                    }
+                }
             }
         } else {
             state.compute(id, node, None);
         }
     }
+
     // outputs that are directly derived from inputs will not be computed by the loop above
     // let's do that here
-    for (idx, output_sig) in network.outputs().enumerate() {
-        if !state.outputs.contains(&output_sig.node_id()) {
-            continue;
-        }
-        state
-            .program
-            .signal_copy(output_sig, Address::Out(idx as u64));
-    }
-    let mut program = state.program.into();
+    // for (idx, output_sig) in network.outputs().enumerate() {
+    //     if !state.outputs.contains(&output_sig.node_id()) {
+    //         continue;
+    //     }
+    //     state
+    //         .program
+    //         .signal_copy(output_sig, RowAddress(idx as u64));
+    // }
+    let program = Program { architecture: &ARCHITECTURE , instructions: state.program };
     Ok(program)
 }
 
-impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N> {
+impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
     pub fn new(architecture: &'a PRADAArchitecture, network: &'n N) -> Self {
         let mut candidates = FxHashSet::default();
         // check all parents of leafs whether they have only leaf children, in which case they are
@@ -120,17 +144,54 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
                 }
             }
         }
-        let program = ProgramState::new(architecture, network);
         let outputs = network.outputs().map(|sig| sig.node_id()).collect();
+
+        let (dram_state, value_states, free_rows) = CompilationState::get_init_states(network, (0..ROWS_PER_SUBARRAY) .map(RowAddress::from) .collect());
         Self {
-            dram_state: HashMap::new(),
-            value_states: HashMap::new(),
+            dram_state,
+            value_states,
+            // initially all rows are free
+            free_rows_per_subarray: free_rows,
             network,
             candidates,
-            program,
+            // start with empty program (no instructions inside)
+            program: vec!(),
             outputs,
             leftover_use_count: FxHashMap::default(),
         }
+    }
+
+    pub fn get_init_states(ntk: &'n N, mut free_rows_per_subarray: Vec<RowAddress> ) ->  (HashMap<RowAddress, RowState>, HashMap<Signal, RowAddress>, Vec<RowAddress>) {
+        let mut dram_state = HashMap::new();
+        let mut value_states = HashMap::new();
+        // 0. Place constants `True`&`False`
+        let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+        let row_state = RowState{ is_compute_row: false, live_value: None, constant: Some(0) }; // False
+        dram_state.insert(next_row, row_state);
+        println!("Place 0s into {next_row}");
+        let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+        let row_state = RowState{ is_compute_row: false, live_value: None, constant: Some(std::usize::MAX) }; // True
+        dram_state.insert(next_row, row_state);
+        println!("Place 1s into {next_row}");
+
+        let leafs = ntk.leafs();
+        for id in leafs {
+            let node = ntk.node(id);
+            let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+            match node {
+                Mig::Input(i) => {
+                    let row_state = RowState{ is_compute_row: false, live_value: Some(Signal::new(id, false)), constant: None };
+                    value_states.insert(Signal::new(id, false), next_row);
+                    dram_state.insert(next_row, row_state);
+                }
+                Mig::False => {
+                    continue; // everything ok: constants were already placed beforehand
+                }
+                _ => unreachable!("leaf node should be either an input or a constant"),
+            };
+        }
+
+        (dram_state, value_states, free_rows_per_subarray)
     }
 
     pub fn leftover_use_count(&mut self, id: Id) -> &mut usize {
@@ -139,7 +200,8 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
         })
     }
 
-    pub fn compute(&mut self, id: Id, node: Mig, out_address: Option<Address>) {
+    /// Actually compute the operation behind `node` and store it into `out_address`
+    pub fn compute(&mut self, id: Id, node: Mig, out_address: Option<RowAddress>) {
         if !self.candidates.remove(&(id, node)) {
             panic!("not a candidate");
         }
@@ -147,30 +209,8 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
             panic!("can only compute majs")
         };
 
-        // select which MAJ instruction to use
-        todo!();
-
         // now we need to place the remaining non-matching operands...
-
-        // all signals are in place, now we can perform the MAJ operation
-        // self.program
-        //     .maj(maj_id, Signal::new(id, false), out_address);
-
-        // free up rows if possible
-        // (1) for the MAJ-signal
-        if *self.leftover_use_count(id) == 0 {
-            self.program.free_id_rows(id);
-        }
-        // (2) for the input signals
-        'outer: for i in 0..3 {
-            // decrease use count only once per id
-            for j in 0..i {
-                if signals[i].node_id() == signals[j].node_id() {
-                    continue 'outer;
-                }
-            }
-            *self.leftover_use_count(signals[i].node_id()) -= 1
-        }
+        // TODO: perform actual computation
 
         // lastly, determine new candidates
         for parent_id in self.network.node_outputs(id) {
@@ -178,103 +218,10 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
             if parent_node
                 .inputs()
                 .iter()
-                .all(|s| self.program.rows().contains_id(s.node_id()))
+                .all(|s| self.value_states.contains_key(s))
             {
                 self.candidates.insert((parent_id, parent_node));
             }
         }
-    }
-
-    fn spilling_cost(&self, operands: &[BitwiseOperand; 3], matching: &[bool; 3]) -> i32 {
-        let mut cost = 0;
-        for i in 0..3 {
-            if matching[i] {
-                continue;
-            }
-            let Some(_signal) = self
-                .program
-                .rows()
-                .get_row_signal(Row::Bitwise(operands[i].row()))
-            else {
-                continue;
-            };
-            cost += 1
-            // // signal and inverted signal not present somewhere else
-            // if self.program.rows().get_rows(signal).count() < 2
-            //     && self
-            //         .program
-            //         .rows()
-            //         .get_rows(signal.invert())
-            //         .next()
-            //         .is_none()
-            // {
-            //     cost += 1
-            // }
-        }
-        cost
-    }
-
-    /// Reorders the `signals` so that the maximum number of the given signal-operator-pairs already
-    /// match according to the current program state.
-    /// The returned array contains true for each operand that then already contains the correct
-    /// signal and the number is equal to the number of trues in the array.
-    fn get_mapping(
-        &self,
-        signals: &mut [Signal; 3],
-        operands: &[BitwiseOperand; 3],
-    ) -> ([bool; 3], usize) {
-        let signals_with_idx = {
-            let mut i = 0;
-            signals.map(|signal| {
-                i += 1;
-                (signal, i - 1)
-            })
-        };
-        let operand_signals = operands.map(|op| self.program.rows().get_operand_signal(op));
-
-        // reorder signals by how often their signal is already available in an operand
-        let mut signals_with_matches = signals_with_idx.map(|(s, i)| {
-            (
-                s,
-                i,
-                operand_signals
-                    .iter()
-                    .filter(|sig| **sig == Some(s))
-                    .count(),
-            )
-        });
-        signals_with_matches.sort_by(|a, b| a.2.cmp(&b.2));
-
-        // then we can assign places one by one and get an optimal mapping (probably, proof by
-        // intuition only)
-
-        // contains for each operand index whether the signal at that position is already the
-        // correct one
-        let mut result = [false; 3];
-        // contains the mapping of old signal index to operand index
-        let mut new_positions = [0usize, 1, 2];
-        // contains the number of assigned signals (i.e. #true in result)
-        let mut assigned_signals = 0;
-
-        for (signal, signal_idx, _) in signals_with_matches {
-            // find operand index for that signal
-            let Some((target_idx, _)) = operand_signals
-                .iter()
-                .enumerate()
-                .find(|(idx, sig)| **sig == Some(signal) && !result[*idx])
-            else {
-                continue;
-            };
-            result[target_idx] = true;
-            let new_idx = new_positions[signal_idx];
-            signals.swap(target_idx, new_idx);
-            new_positions.swap(target_idx, new_idx);
-            assigned_signals += 1;
-        }
-        (result, assigned_signals)
-    }
-
-    fn architecture(&self) -> &'a PRADAArchitecture {
-        self.program.architecture
     }
 }

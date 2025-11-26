@@ -80,8 +80,6 @@ impl StackedPartialGraph {
 
 #[derive(Debug)]
 pub struct CompilingCost {
-    partial: RefCell<Either<StackedPartialGraph, Rc<CollapsedPartialGraph>>>,
-    not_nesting: NotNesting,
     program_cost: usize,
 }
 
@@ -108,23 +106,16 @@ impl<A: Analysis<MigLanguage>> OptCostFunction<MigLanguage, A> for CompilingCost
             MigLanguage::Not(id) => {
                 let cost = costs(*id);
 
-                let nesting = if cost.not_nesting == NotNesting::NotANot {
-                    NotNesting::FirstNot
-                } else {
-                    NotNesting::NestedNots
-                };
                 CompilingCost::with_children(
                     self.architecture,
                     root,
                     iter::once((*id, cost)),
-                    nesting,
                 )?
             }
             MigLanguage::Maj(children) => CompilingCost::with_children(
                 self.architecture,
                 root,
                 children.map(|id| (id, costs(id))),
-                NotNesting::NotANot,
             )?,
         };
         Some(Rc::new(cost))
@@ -134,8 +125,6 @@ impl<A: Analysis<MigLanguage>> OptCostFunction<MigLanguage, A> for CompilingCost
 impl CompilingCost {
     pub fn leaf(root: MigLanguage) -> Self {
         Self {
-            partial: RefCell::new(Either::Left(StackedPartialGraph::leaf(root))),
-            not_nesting: NotNesting::NotANot,
             program_cost: 0,
         }
     }
@@ -143,35 +132,24 @@ impl CompilingCost {
         architecture: &PRADAArchitecture,
         root: MigLanguage,
         child_costs: impl IntoIterator<Item = (Id, Rc<CompilingCost>)>,
-        not_nesting: NotNesting,
     ) -> Option<Self> {
-        let child_graphs = child_costs
-            .into_iter()
-            .map(|(id, cost)| cost.collapsed_graph(id));
-        let partial_graph = StackedPartialGraph::new(root, child_graphs);
-        let program_cost = match compile(architecture, &partial_graph.with_backward_edges()) {
-            Err(_) => return None,
-            Ok(program) => program.instructions.len(),
-        };
-        Self {
-            partial: RefCell::new(Either::Left(partial_graph)),
-            not_nesting,
-            program_cost,
-        }
-        .into()
-    }
-    pub fn collapsed_graph(&self, id: Id) -> Rc<CollapsedPartialGraph> {
-        let mut partial = self.partial.borrow_mut();
-        let stacked = match partial.deref() {
-            Either::Left(stacked) => stacked,
-            Either::Right(collapsed) => {
-                assert_eq!(collapsed.root_id, id);
-                return collapsed.clone();
-            }
-        };
-        let collapsed = Rc::new(stacked.collapse(id));
-        *partial = Either::Right(collapsed.clone());
-        collapsed
+        // let child_graphs = child_costs
+        //     .into_iter()
+        //     .map(|(id, cost)| cost.collapsed_graph(id));
+        // let partial_graph = StackedPartialGraph::new(root, child_graphs);
+        // let program_cost = match compile(architecture, &partial_graph.with_backward_edges()) {
+        //     Err(_) => return None,
+        //     Ok(program) => program.instructions.len(),
+        // };
+        // Self {
+        //     partial: RefCell::new(Either::Left(partial_graph)),
+        //     not_nesting,
+        //     program_cost,
+        // }
+        // .into()
+        println!("TODO: compiling cost");
+        // None
+        return Some(CompilingCost{program_cost: 1})
     }
 }
 
@@ -213,30 +191,12 @@ impl Network for StackedPartialGraph {
 
 impl PartialEq for CompilingCost {
     fn eq(&self, other: &Self) -> bool {
-        if other.not_nesting == NotNesting::NestedNots && self.not_nesting == NotNesting::NestedNots
-        {
-            true
-        } else {
-            self.program_cost.eq(&other.program_cost)
-        }
+        self.program_cost.eq(&other.program_cost)
     }
 }
 
 impl PartialOrd for CompilingCost {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        #[allow(clippy::collapsible_else_if)]
-        if self.not_nesting == NotNesting::NestedNots {
-            if other.not_nesting == NotNesting::NestedNots {
-                Some(Ordering::Equal)
-            } else {
-                Some(Ordering::Greater)
-            }
-        } else {
-            if other.not_nesting == NotNesting::NestedNots {
-                Some(Ordering::Less)
-            } else {
-                self.program_cost.partial_cmp(&other.program_cost)
-            }
-        }
+        self.program_cost.partial_cmp(&other.program_cost)
     }
 }
