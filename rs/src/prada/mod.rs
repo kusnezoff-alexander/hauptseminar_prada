@@ -1,3 +1,4 @@
+mod architecture;
 mod compilation;
 mod extraction;
 mod optimization;
@@ -11,6 +12,7 @@ use self::compilation::compile;
 use self::extraction::CompilingCostFunction;
 
 use crate::opt_extractor::{OptExtractionNetwork, OptExtractor};
+use crate::prada::architecture::{PRADAArchitecture, ARCHITECTURE};
 use eggmock::egg::{rewrite, EGraph, Rewrite, Runner};
 use eggmock::{Mig, MigLanguage, MigReceiverFFI, Network, Receiver, ReceiverFFI};
 use program::*;
@@ -19,76 +21,20 @@ use rows::*;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BitwiseOperand {
     T(u8),
-    DCC { inverted: bool, index: u8 },
 }
 
-#[derive(Clone, Debug)]
-pub struct Architecture {
-    maj_ops: Vec<usize>,
-    multi_activations: Vec<Vec<BitwiseOperand>>,
-    num_dcc: u8,
-}
-
-impl Architecture {
-    pub fn new(multi_activations: Vec<Vec<BitwiseOperand>>, num_dcc: u8) -> Self {
-        let maj_ops = multi_activations
-            .iter()
-            .enumerate()
-            .filter(|(_, ops)| ops.len() == 3)
-            .map(|(i, _)| i)
-            .collect();
-        Self {
-            maj_ops,
-            multi_activations,
-            num_dcc,
+impl BitwiseOperand {
+    pub fn row(&self) -> BitwiseRow {
+        match self {
+            BitwiseOperand::T(t) => BitwiseRow::T(*t),
         }
+    }
+    pub fn inverted(&self) -> bool {
+        todo!()
+        // matches!(self, BitwiseOperand::DCC { inverted: true, .. })
     }
 }
 
-static ARCHITECTURE: LazyLock<Architecture> = LazyLock::new(|| {
-    use BitwiseOperand::*;
-    Architecture::new(
-        vec![
-            // 2 rows
-            vec![
-                DCC {
-                    index: 0,
-                    inverted: true,
-                },
-                T(0),
-            ],
-            vec![
-                DCC {
-                    inverted: true,
-                    index: 1,
-                },
-                T(1),
-            ],
-            vec![T(2), T(3)],
-            vec![T(0), T(3)],
-            // 3 rows
-            vec![T(0), T(1), T(2)],
-            vec![T(1), T(2), T(3)],
-            vec![
-                DCC {
-                    index: 0,
-                    inverted: false,
-                },
-                T(1),
-                T(2),
-            ],
-            vec![
-                DCC {
-                    index: 1,
-                    inverted: false,
-                },
-                T(0),
-                T(3),
-            ],
-        ],
-        2,
-    )
-});
 
 static REWRITE_RULES: LazyLock<Vec<Rewrite<MigLanguage, ()>>> = LazyLock::new(|| {
     let mut rules = vec![
@@ -103,21 +49,6 @@ static REWRITE_RULES: LazyLock<Vec<Rewrite<MigLanguage, ()>>> = LazyLock::new(||
     rules.extend(rewrite!("distributivity"; "(maj ?a ?b (maj ?c ?d ?e))" <=> "(maj (maj ?a ?b ?c) (maj ?a ?b ?d) ?e)"));
     rules
 });
-
-impl BitwiseOperand {
-    pub fn row(&self) -> BitwiseRow {
-        match self {
-            BitwiseOperand::T(t) => BitwiseRow::T(*t),
-            BitwiseOperand::DCC { index, .. } => BitwiseRow::DCC(*index),
-        }
-    }
-    pub fn is_dcc(&self) -> bool {
-        matches!(self, BitwiseOperand::DCC { .. })
-    }
-    pub fn inverted(&self) -> bool {
-        matches!(self, BitwiseOperand::DCC { inverted: true, .. })
-    }
-}
 
 struct CompilingReceiverResult<'a> {
     output: CompilerOutput<'a>,
@@ -138,7 +69,7 @@ struct CompilerOutput<'a> {
 }
 
 fn compiling_receiver<'a>(
-    architecture: &'a Architecture,
+    architecture: &'a PRADAArchitecture,
     rules: &'a [Rewrite<MigLanguage, ()>],
     settings: CompilerSettings,
 ) -> impl Receiver<Result = CompilingReceiverResult<'a>, Node = Mig> + 'a {

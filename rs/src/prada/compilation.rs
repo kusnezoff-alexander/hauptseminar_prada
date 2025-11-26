@@ -1,8 +1,9 @@
 use super::{
-    optimization::optimize, Address, Architecture, BitwiseOperand, Program, ProgramState,
+    architecture::{PRADAArchitecture},
+    optimization::optimize, Address,  Program, ProgramState,
     SingleRowAddress,
 };
-use crate::prada::rows::Row;
+use crate::prada::{rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::max;
@@ -19,7 +20,7 @@ pub struct CompilationState<'a, 'n, N> {
 }
 
 pub fn compile<'a>(
-    architecture: &'a Architecture,
+    architecture: &'a PRADAArchitecture,
     network: &impl NetworkWithBackwardEdges<Node = Mig>,
 ) -> Result<Program<'a>, &'static str> {
     let mut state = CompilationState::new(architecture, network);
@@ -59,7 +60,6 @@ pub fn compile<'a>(
                     state.program.signal_copy(
                         signal,
                         SingleRowAddress::Out(output as u64),
-                        state.program.rows().get_free_dcc().unwrap_or(0),
                     );
                 } else {
                     state.compute(id, node, Some(Address::Out(output as u64)));
@@ -82,7 +82,7 @@ pub fn compile<'a>(
         }
         state
             .program
-            .signal_copy(output_sig, SingleRowAddress::Out(idx as u64), 0);
+            .signal_copy(output_sig, SingleRowAddress::Out(idx as u64));
     }
     let mut program = state.program.into();
     optimize(&mut program);
@@ -90,7 +90,7 @@ pub fn compile<'a>(
 }
 
 impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N> {
-    pub fn new(architecture: &'a Architecture, network: &'n N) -> Self {
+    pub fn new(architecture: &'a PRADAArchitecture, network: &'n N) -> Self {
         let mut candidates = FxHashSet::default();
         // check all parents of leafs whether they have only leaf children, in which case they are
         // candidates
@@ -140,9 +140,8 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
                 .try_into()
                 .expect("maj has to have 3 operands");
             let (matches, match_no) = self.get_mapping(&mut signals, operands);
-            let dcc_cost = self.optimize_dcc_usage(&mut signals, operands, &matches);
             let spilling_cost = self.spilling_cost(operands, &matches);
-            let cost = 3.0 - match_no as f32 + dcc_cost as f32 + 0.5 * spilling_cost as f32;
+            let cost = 3.0 - match_no as f32 + 0.5 * spilling_cost as f32;
             let is_opt = match &opt {
                 None => true,
                 Some((opt_no, _, _, _)) => *opt_no > cost,
@@ -156,17 +155,6 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
 
         // now we need to place the remaining non-matching operands...
 
-        // for that we first find a free DCC row for possibly inverting missing signals without
-        // accidentally overriding a signal that is already placed correctly
-        let used_dcc = || {
-            operands.iter().filter_map(|op| match op {
-                BitwiseOperand::DCC { index: i, .. } => Some(i),
-                _ => None,
-            })
-        };
-        let free_dcc = (0..self.architecture().num_dcc)
-            .find(|i| !used_dcc().any(|used| *used == *i))
-            .expect("cannot use all DCC rows in one MAJ operation");
 
         // then we can copy the signals into their places
         for i in 0..3 {
@@ -174,7 +162,7 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
                 continue;
             }
             self.program
-                .signal_copy(signals[i], SingleRowAddress::Bitwise(operands[i]), free_dcc);
+                .signal_copy(signals[i], SingleRowAddress::Bitwise(operands[i]));
         }
 
         // all signals are in place, now we can perform the MAJ operation
@@ -208,53 +196,6 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
                 self.candidates.insert((parent_id, parent_node));
             }
         }
-    }
-
-    fn optimize_dcc_usage(
-        &self,
-        signals: &mut [Signal; 3],
-        operands: &[BitwiseOperand; 3],
-        matching: &[bool; 3],
-    ) -> i32 {
-        // first, try using a DCC row for all non-matching rows that require inversion
-        let mut dcc_adjusted = [false; 3];
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for i in 0..3 {
-                if matching[i]
-                    || operands[i].is_dcc()
-                    || self.program.rows().get_rows(signals[i]).next().is_some()
-                {
-                    continue;
-                }
-                // the i-th operand needs inversion. let's try doing this by swapping it with a
-                // signal of a DCC row so that we require one less copy operation
-                for j in 0..3 {
-                    if i == j || matching[j] || dcc_adjusted[j] {
-                        continue;
-                    }
-                    if operands[j].is_dcc() {
-                        signals.swap(i, j);
-                        dcc_adjusted[j] = true;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        let mut cost = 0;
-        for ((signal, operand), matching) in signals.iter().zip(operands).zip(matching) {
-            if *matching || operand.is_dcc() {
-                continue;
-            }
-            // if the signal is not stored somewhere, i.e. only the inverted signal is present, this
-            // requires a move via a DCC row to the actual operand
-            if self.program.rows().get_rows(*signal).next().is_none() {
-                cost += 1
-            }
-        }
-        cost
     }
 
     fn spilling_cost(&self, operands: &[BitwiseOperand; 3], matching: &[bool; 3]) -> i32 {
@@ -346,7 +287,7 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
         (result, assigned_signals)
     }
 
-    fn architecture(&self) -> &'a Architecture {
+    fn architecture(&self) -> &'a PRADAArchitecture {
         self.program.architecture
     }
 }

@@ -1,4 +1,6 @@
-use super::{Architecture, BitwiseOperand, SingleRowAddress};
+use crate::prada::architecture::PRADAArchitecture;
+
+use super::SingleRowAddress;
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Signal};
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -17,7 +19,6 @@ pub enum Row {
 /// the non-inverted row.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BitwiseRow {
-    DCC(u8),
     T(u8),
 }
 
@@ -27,14 +28,14 @@ pub struct Rows<'a> {
     signals: FxHashMap<Signal, Vec<Row>>,
     rows: FxHashMap<Row, Signal>,
     spill_counter: u32,
-    architecture: &'a Architecture,
+    architecture: &'a PRADAArchitecture,
 }
 
 impl<'a> Rows<'a> {
     /// Initializes the rows with the leaf values in the given network.
     pub fn new(
         ntk: &impl NetworkWithBackwardEdges<Node = Mig>,
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
     ) -> Self {
         let mut rows = Rows {
             signals: FxHashMap::default(),
@@ -65,11 +66,6 @@ impl<'a> Rows<'a> {
         }
     }
 
-    pub fn get_free_dcc(&self) -> Option<u8> {
-        (0..self.architecture.num_dcc)
-            .find(|&i| !self.rows.contains_key(&Row::Bitwise(BitwiseRow::DCC(i))))
-    }
-
     /// Returns the current signal of the given row.
     pub fn get_row_signal(&self, row: Row) -> Option<Signal> {
         self.rows.get(&row).cloned()
@@ -87,8 +83,9 @@ impl<'a> Rows<'a> {
     /// Returns the signal of the given operand. That is, if it is a DCC operand the signal of the
     /// respective DCC row, but inverted if the address refers to the inverted row, otherwise the
     /// signal of the row of the operand.
-    pub fn get_operand_signal(&self, operand: BitwiseOperand) -> Option<Signal> {
-        self.get_address_signal(operand.into())
+    pub fn get_operand_signal(&self) -> Option<Signal> {
+        // self.get_address_signal(operand.into())
+        todo!()
     }
 
     /// Returns all rows with the given signal.
@@ -173,8 +170,3 @@ impl<'a> Rows<'a> {
     }
 }
 
-impl From<BitwiseRow> for Row {
-    fn from(value: BitwiseRow) -> Self {
-        Self::Bitwise(value)
-    }
-}

@@ -1,5 +1,6 @@
-use super::{compile, Architecture};
+use super::compile;
 use crate::opt_extractor::OptCostFunction;
+use crate::prada::architecture::PRADAArchitecture;
 use eggmock::egg::{Analysis, EClass, Id, Language};
 use eggmock::{EggIdToSignal, Mig, MigLanguage, Network, NetworkLanguage, Signal};
 use either::Either;
@@ -11,7 +12,7 @@ use std::ops::{Deref, Index};
 use std::rc::Rc;
 
 pub struct CompilingCostFunction<'a> {
-    pub architecture: &'a Architecture,
+    pub architecture: &'a PRADAArchitecture,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -139,7 +140,7 @@ impl CompilingCost {
         }
     }
     pub fn with_children(
-        architecture: &Architecture,
+        architecture: &PRADAArchitecture,
         root: MigLanguage,
         child_costs: impl IntoIterator<Item = (Id, Rc<CompilingCost>)>,
         not_nesting: NotNesting,

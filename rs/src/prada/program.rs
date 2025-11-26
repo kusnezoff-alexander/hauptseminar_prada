@@ -1,4 +1,6 @@
-use super::{Architecture, BitwiseOperand, BitwiseRow, Row, Rows};
+use crate::prada::architecture::PRADAArchitecture;
+
+use super::{BitwiseOperand, BitwiseRow, Row, Rows};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Signal};
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
@@ -35,7 +37,7 @@ pub enum Instruction {
 
 #[derive(Debug, Clone)]
 pub struct Program<'a> {
-    pub architecture: &'a Architecture,
+    pub architecture: &'a PRADAArchitecture,
     pub instructions: Vec<Instruction>,
 }
 
@@ -46,7 +48,7 @@ pub struct ProgramState<'a> {
 }
 
 impl<'a> Program<'a> {
-    pub fn new(architecture: &'a Architecture, instructions: Vec<Instruction>) -> Self {
+    pub fn new(architecture: &'a PRADAArchitecture, instructions: Vec<Instruction>) -> Self {
         Self {
             architecture,
             instructions,
@@ -57,7 +59,7 @@ impl<'a> Program<'a> {
 impl Instruction {
     pub fn used_addresses<'a>(
         &self,
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
     ) -> impl Iterator<Item = SingleRowAddress> + 'a {
         let from = match self {
             Instruction::AAP(from, _) => from,
@@ -75,7 +77,7 @@ impl Instruction {
 
     pub fn input_operands<'a>(
         &self,
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
     ) -> impl Iterator<Item = SingleRowAddress> + 'a {
         let from = match self {
             Instruction::AAP(from, _) => from,
@@ -86,7 +88,7 @@ impl Instruction {
 
     pub fn overridden_rows<'a>(
         &self,
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
     ) -> impl Iterator<Item = Row> + 'a {
         let first = *match self {
             Instruction::AP(a) => a,
@@ -114,7 +116,7 @@ impl Instruction {
 
 impl<'a> ProgramState<'a> {
     pub fn new(
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
         network: &impl NetworkWithBackwardEdges<Node = Mig>,
     ) -> Self {
         Self {
@@ -135,7 +137,7 @@ impl<'a> ProgramState<'a> {
         self.instructions.push(instruction)
     }
 
-    pub fn signal_copy(&mut self, signal: Signal, target: SingleRowAddress, intermediate_dcc: u8) {
+    pub fn signal_copy(&mut self, signal: Signal, target: SingleRowAddress) {
         {
             // if any row contains the signal, then this is easy, simply copy the row into the
             // target operand
@@ -188,29 +190,7 @@ impl<'a> ProgramState<'a> {
             ));
             return;
         }
-        // this is the very sad case in which we have to use the intermediate DCC row to create the
-        // signal from its inverse
-        // first, copy the inverted signal from the signal_row to the DCC row
-        let intermediate_dcc_addr = SingleRowAddress::Bitwise(BitwiseOperand::DCC {
-            inverted: false,
-            index: intermediate_dcc,
-        });
-        self.set_signal(intermediate_dcc_addr, signal.invert());
-        self.instructions.push(Instruction::AAP(
-            inverted_signal_row.into(),
-            intermediate_dcc_addr.into(),
-        ));
 
-        // then copy the signal from the inverted intermediate DCC row into our target operand
-        let inv_intermediate_dcc_operand = BitwiseOperand::DCC {
-            inverted: true,
-            index: intermediate_dcc,
-        };
-        self.set_signal(target, signal);
-        self.instructions.push(Instruction::AAP(
-            inv_intermediate_dcc_operand.into(),
-            target.into(),
-        ));
     }
 
     /// Sets the value of the operand in `self.rows` to the given signal. If that removes the last
@@ -250,7 +230,7 @@ impl Address {
     }
     pub fn row_addresses<'a>(
         &self,
-        architecture: &'a Architecture,
+        architecture: &'a PRADAArchitecture,
     ) -> impl Iterator<Item = SingleRowAddress> + 'a {
         let single = self.as_single_row().into_iter();
         let multi = match self {
@@ -331,10 +311,6 @@ impl From<BitwiseRow> for BitwiseOperand {
     fn from(value: BitwiseRow) -> Self {
         match value {
             BitwiseRow::T(t) => BitwiseOperand::T(t),
-            BitwiseRow::DCC(dcc) => BitwiseOperand::DCC {
-                index: dcc,
-                inverted: false,
-            },
         }
     }
 }
@@ -374,13 +350,6 @@ impl Display for Program<'_> {
         let write_operand = |f: &mut Formatter<'_>, o: &BitwiseOperand| -> std::fmt::Result {
             match o {
                 BitwiseOperand::T(t) => write!(f, "T{t}"),
-                BitwiseOperand::DCC { inverted, index } => {
-                    if *inverted {
-                        write!(f, "~DCC{index}")
-                    } else {
-                        write!(f, "DCC{index}")
-                    }
-                }
             }
         };
         let write_address = |f: &mut Formatter<'_>, a: &Address| -> std::fmt::Result {

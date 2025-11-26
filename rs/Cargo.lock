@@ -99,6 +99,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
+name = "fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09904adae26440d46daeacb5ed7922fee69d43ebf84d31e078cd49652cecd718"
+
+[[package]]
 name = "foldhash"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -159,6 +165,7 @@ version = "0.1.0"
 dependencies = [
  "eggmock",
  "either",
+ "fmt",
  "ouroboros",
  "rustc-hash",
  "smallvec",
