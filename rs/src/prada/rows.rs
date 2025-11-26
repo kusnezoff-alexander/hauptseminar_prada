@@ -1,6 +1,5 @@
-use crate::prada::architecture::PRADAArchitecture;
+use crate::prada::{architecture::PRADAArchitecture, program::Address, BitwiseOperand};
 
-use super::SingleRowAddress;
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Signal};
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -74,10 +73,9 @@ impl<'a> Rows<'a> {
     /// Returns the signal of the given address. That is, if it is a DCC address the signal of the
     /// respective DCC row, but inverted if the address refers to the inverted row, otherwise the
     /// signal of the row of the address.
-    pub fn get_address_signal(&self, address: SingleRowAddress) -> Option<Signal> {
-        self.get_row_signal(address.row())?
-            .maybe_invert(address.inverted())
-            .into()
+    pub fn get_address_signal(&self, address: Address) -> Option<Signal> {
+        todo!()
+        // TODO
     }
 
     /// Returns the signal of the given operand. That is, if it is a DCC operand the signal of the
@@ -111,10 +109,8 @@ impl<'a> Rows<'a> {
     /// but inverted iff the operand is inverted.
     ///
     /// Returns the signal of the operand previous to this operation if it was changed.
-    pub fn set_signal(&mut self, address: SingleRowAddress, signal: Signal) -> Option<Signal> {
-        self.set_row_signal(address.row(), signal.maybe_invert(address.inverted()))?
-            .maybe_invert(address.inverted())
-            .into()
+    pub fn set_signal(&mut self, address: Address, signal: Signal) -> Option<Signal> {
+        todo!()
     }
 
     /// Equivalent to `set_row_signals`, but additionally ensures that the row was previously empty

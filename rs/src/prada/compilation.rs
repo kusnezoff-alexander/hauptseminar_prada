@@ -1,6 +1,5 @@
 use super::{
     architecture::{PRADAArchitecture},
-    SingleRowAddress,
 };
 use crate::prada::{architecture::{RowAddress, SubarrayId}, program::{Address, Program, ProgramState}, rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
@@ -34,6 +33,7 @@ pub struct CompilationState<'a, 'n, N> {
     leftover_use_count: FxHashMap<Id, usize>,
 }
 
+/// Main function
 pub fn compile<'a>(
     architecture: &'a PRADAArchitecture,
     network: &impl NetworkWithBackwardEdges<Node = Mig>,
@@ -74,7 +74,7 @@ pub fn compile<'a>(
                     state.compute(id, node, None);
                     state.program.signal_copy(
                         signal,
-                        SingleRowAddress::Out(output as u64),
+                        Address::Out(output as u64),
                     );
                 } else {
                     state.compute(id, node, Some(Address::Out(output as u64)));
@@ -97,7 +97,7 @@ pub fn compile<'a>(
         }
         state
             .program
-            .signal_copy(output_sig, SingleRowAddress::Out(idx as u64));
+            .signal_copy(output_sig, Address::Out(idx as u64));
     }
     let mut program = state.program.into();
     Ok(program)

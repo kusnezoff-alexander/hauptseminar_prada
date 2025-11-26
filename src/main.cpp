@@ -21,7 +21,13 @@ int main()
 
   write_dot( in, "in.dot" );
 
-  const auto settings = ambit_compiler_settings{
+  // const auto settings = ambit_compiler_settings{
+  //     .print_program = true,
+  //     .verbose = true,
+  //     .preoptimize = true,
+  //     .rewrite = true,
+  // };
+  const auto settings = prada_compiler_settings{
       .print_program = true,
       .verbose = true,
       .preoptimize = true,

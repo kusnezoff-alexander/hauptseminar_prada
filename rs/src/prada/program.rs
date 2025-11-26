@@ -77,7 +77,8 @@ impl Instruction {
         &self,
         architecture: &'a PRADAArchitecture,
     ) -> impl Iterator<Item = Row> + 'a {
-        todo!()
+        return vec!().into_iter();
+        todo!();
         // match self {
         //     Instruction::AAPRowCopy(from, _) => vec!(*from).into_iter(),
         //     Instruction::AAPTRA(a, b, c ) => vec!(*a,*b,*c).into_iter(),
@@ -119,10 +120,15 @@ impl<'a> ProgramState<'a> {
         // otherwise we need to search the inverted signal and take a DCC row if possible, otherwise
         // use the intermediate DCC to invert
         // let mut inverted_signal_row = None;
+        let mut inv_instructions = vec!();
         for row in self.rows.get_rows(signal.invert()) {
+            inv_instructions.push(Instruction::N(Address::In(0)));
             // TODO: invert operand with `N` DRAM Cmd
-            self.instructions.push(Instruction::N(Address::In(0)));
         }
+
+        self.instructions.append(&mut inv_instructions);
+
+
         return;
         // let inverted_signal_row =
         //     inverted_signal_row.expect("inverted signal row should be present");
