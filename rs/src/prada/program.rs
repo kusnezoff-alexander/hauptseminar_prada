@@ -1,9 +1,7 @@
 use crate::prada::architecture::{PRADAArchitecture, RowAddress};
 
 use super::{BitwiseOperand, BitwiseRow, Row, Rows};
-use eggmock::{Id, Mig, NetworkWithBackwardEdges, Signal};
 use std::fmt::{Display, Formatter};
-use std::ops::{Deref, DerefMut};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Instruction {

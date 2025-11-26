@@ -3,6 +3,7 @@ use super::{
 };
 use crate::prada::{architecture::{RowAddress, SubarrayId, ARCHITECTURE, ROWS_PER_SUBARRAY}, program::{Instruction, Program}, rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
+use log::debug;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{cmp::max, collections::HashMap, u64::MAX};
 
@@ -44,13 +45,13 @@ pub fn compile<'a>(
     network: &impl NetworkWithBackwardEdges<Node = Mig>,
 ) -> Result<Program<'a>, &'static str> {
 
+    // init candidates, dram_state etc.
     let mut state = CompilationState::new(architecture, network);
-    let mut max_cand_size = 0;
 
     dbg!("{:?}", state.value_states.clone());
 
     while !state.candidates.is_empty() {
-        max_cand_size = max(max_cand_size, state.candidates.len());
+        // choose next candidate
         let (id, node, _, _, _) = state
             .candidates
             .iter()
@@ -72,7 +73,6 @@ pub fn compile<'a>(
             .min_by_key(|(_, _, not_present, outputs, output)| (*not_present, *outputs, !output))
             .unwrap();
 
-        // start computation from outputs (->unused computations are ignored automatically)
         if state.outputs.contains(&id) {
             for (output, signal) in network.outputs().enumerate() {
                 if signal.node_id() != id {
@@ -105,6 +105,7 @@ pub fn compile<'a>(
                     let row= state.value_states.remove(signal);
                     if let Some(row_addr) = row {
                         state.dram_state.remove(&row_addr);
+                        state.free_rows_per_subarray.push(row_addr);
                     }
                 }
             }
@@ -165,14 +166,14 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
         let mut dram_state = HashMap::new();
         let mut value_states = HashMap::new();
         // 0. Place constants `True`&`False`
-        let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+        let row_for_false = free_rows_per_subarray.pop().expect("No more free rows");
         let row_state = RowState{ is_compute_row: false, live_value: None, constant: Some(0) }; // False
-        dram_state.insert(next_row, row_state);
-        println!("Place 0s into {next_row}");
-        let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+        dram_state.insert(row_for_false, row_state);
+        println!("Place 0s into {row_for_false}");
+        let row_for_true = free_rows_per_subarray.pop().expect("No more free rows");
         let row_state = RowState{ is_compute_row: false, live_value: None, constant: Some(std::usize::MAX) }; // True
-        dram_state.insert(next_row, row_state);
-        println!("Place 1s into {next_row}");
+        dram_state.insert(row_for_true, row_state);
+        println!("Place 1s into {row_for_true}");
 
         let leafs = ntk.leafs();
         for id in leafs {
@@ -185,7 +186,13 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
                     dram_state.insert(next_row, row_state);
                 }
                 Mig::False => {
-                    continue; // everything ok: constants were already placed beforehand
+                    let row_state = RowState{ is_compute_row: false, live_value: Some(Signal::new(id, false)), constant: Some(0) };
+                    value_states.insert(Signal::new(id, false), row_for_false);
+                    dram_state.insert(row_for_false, row_state);
+
+                    let row_state = RowState{ is_compute_row: false, live_value: Some(Signal::new(id, true)), constant: Some(std::usize::MAX) };
+                    value_states.insert(Signal::new(id, true), row_for_true);
+                    dram_state.insert(row_for_true, row_state);
                 }
                 _ => unreachable!("leaf node should be either an input or a constant"),
             };
@@ -196,12 +203,14 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
 
     pub fn leftover_use_count(&mut self, id: Id) -> &mut usize {
         self.leftover_use_count.entry(id).or_insert_with(|| {
+            // or if node hasn't been touched yet: init `leftover_use_count` with nr uses
             self.network.node_outputs(id).count() + self.outputs.contains(&id) as usize
         })
     }
 
     /// Actually compute the operation behind `node` and store it into `out_address`
     pub fn compute(&mut self, id: Id, node: Mig, out_address: Option<RowAddress>) {
+        dbg!("Candidates: {:?}", &self.candidates);
         if !self.candidates.remove(&(id, node)) {
             panic!("not a candidate");
         }
@@ -211,6 +220,26 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
 
         // now we need to place the remaining non-matching operands...
         // TODO: perform actual computation
+        let row_addresses: Vec<RowAddress> = signals.iter().map(|signal|
+            *self.value_states.get(signal).unwrap_or_else(|| panic!("Input Signal {signal:?} not present. Why is {id:?} a candidate then?"))
+        ).collect();
+        // TODO: move values into safe rows if they're needed in future (=still live)
+        for signal in signals {
+            if *self.leftover_use_count(signal.node_id()) > 1  {
+                let next_free_row = self.free_rows_per_subarray.pop().expect("OOM");
+                let row_addr = *self.value_states.get(&signal).expect("Input Signal not present. Why is {id} a candidate then?");
+                self.program.push(Instruction::AAPRowCopy(row_addr, next_free_row));
+            }
+        }
+
+        // perform MAJ3
+        self.program.push(Instruction::AAPTRA(row_addresses[0], row_addresses[1], row_addresses[2]));
+        self.value_states.insert(Signal::new(id, false), row_addresses[0]);
+        self.dram_state.insert(row_addresses[0], RowState { is_compute_row: false, live_value: Some(Signal::new(id, false)), constant: None } );
+        // keep result only in one of the addresses, free the remaining rows
+        self.dram_state.remove(&row_addresses[1]);
+        self.dram_state.remove(&row_addresses[2]);
+        self.free_rows_per_subarray.append(&mut vec!(row_addresses[1], row_addresses[2]));
 
         // lastly, determine new candidates
         for parent_id in self.network.node_outputs(id) {

@@ -163,6 +163,7 @@ extern "C" fn prada_rewrite_ffi(
 
 #[no_mangle]
 extern "C" fn prada_compile_ffi(settings: CompilerSettings) -> MigReceiverFFI<CompilerStatistics> {
+    env_logger::init();
     let receiver = compiling_receiver(&ARCHITECTURE, REWRITE_RULES.as_slice(), settings)
         .map(CompilerStatistics::from_result);
     MigReceiverFFI::new(receiver)

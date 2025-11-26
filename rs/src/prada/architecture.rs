@@ -25,6 +25,7 @@ impl PRADAArchitecture {
             rows_per_subarray,
         }
     }
+
 }
 
 

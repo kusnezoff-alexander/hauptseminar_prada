@@ -1,81 +1,13 @@
-use super::compile;
 use crate::opt_extractor::OptCostFunction;
 use crate::prada::architecture::PRADAArchitecture;
 use eggmock::egg::{Analysis, EClass, Id, Language};
 use eggmock::{EggIdToSignal, Mig, MigLanguage, Network, NetworkLanguage, Signal};
-use either::Either;
-use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 use std::cmp::{max, Ordering};
 use std::iter;
-use std::ops::{Deref, Index};
 use std::rc::Rc;
 
 pub struct CompilingCostFunction<'a> {
     pub architecture: &'a PRADAArchitecture,
-}
-
-#[derive(Debug, Default, Eq, PartialEq)]
-pub enum NotNesting {
-    #[default]
-    NotANot,
-    FirstNot,
-    NestedNots,
-}
-
-#[derive(Debug)]
-pub struct StackedPartialGraph {
-    nodes: Vec<Rc<FxHashMap<Id, MigLanguage>>>,
-    first_free_id: usize,
-    root: MigLanguage,
-}
-
-#[derive(Debug)]
-pub struct CollapsedPartialGraph {
-    nodes: Rc<FxHashMap<Id, MigLanguage>>,
-    first_free_id: usize,
-    root_id: Id,
-}
-
-impl StackedPartialGraph {
-    pub fn leaf(node: MigLanguage) -> Self {
-        Self {
-            nodes: Vec::new(),
-            first_free_id: 0,
-            root: node,
-        }
-    }
-    pub fn new(
-        root: MigLanguage,
-        child_graphs: impl IntoIterator<Item = Rc<CollapsedPartialGraph>>,
-    ) -> Self {
-        let mut nodes = Vec::new();
-        let mut first_free_id = 0;
-        for graph in child_graphs {
-            nodes.push(graph.nodes.clone());
-            first_free_id = max(first_free_id, graph.first_free_id);
-        }
-        Self {
-            nodes,
-            first_free_id,
-            root,
-        }
-    }
-    pub fn collapse(&self, real_id: Id) -> CollapsedPartialGraph {
-        let mut nodes: FxHashMap<Id, MigLanguage> = FxHashMap::default();
-        let first_free_id = max(self.first_free_id, usize::from(real_id));
-        nodes.extend(
-            self.nodes
-                .iter()
-                .flat_map(|map| map.iter().map(|(id, node)| (*id, node.clone()))),
-        );
-        nodes.insert(real_id, self.root.clone());
-        CollapsedPartialGraph {
-            nodes: Rc::new(nodes),
-            first_free_id,
-            root_id: real_id,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -149,43 +81,7 @@ impl CompilingCost {
         // .into()
         println!("TODO: compiling cost");
         // None
-        return Some(CompilingCost{program_cost: 1})
-    }
-}
-
-impl StackedPartialGraph {
-    pub fn get_root_id(&self) -> Id {
-        Id::from(self.first_free_id + 1)
-    }
-}
-
-impl Index<Id> for StackedPartialGraph {
-    type Output = MigLanguage;
-
-    fn index(&self, index: Id) -> &Self::Output {
-        if index == self.get_root_id() {
-            &self.root
-        } else {
-            self.nodes
-                .iter()
-                .filter_map(|m| m.get(&index))
-                .next()
-                .unwrap()
-        }
-    }
-}
-
-impl Network for StackedPartialGraph {
-    type Node = Mig;
-
-    fn outputs(&self) -> impl Iterator<Item = Signal> {
-        iter::once(self.to_signal(self.get_root_id()))
-    }
-
-    fn node(&self, id: eggmock::Id) -> Self::Node {
-        self[Id::from(id)]
-            .to_node(|id| self.to_signal(id))
-            .expect("id should point to a non-not node")
+        Some(CompilingCost{program_cost: 1})
     }
 }
 
