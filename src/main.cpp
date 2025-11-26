@@ -1,4 +1,5 @@
 #include "ambit.h"
+#include "prada.h"
 
 #include <mockturtle/io/write_dot.hpp>
 #include <mockturtle/networks/mig.hpp>
