@@ -1,14 +1,29 @@
 use super::{
     architecture::{PRADAArchitecture},
-    optimization::optimize, Address,  Program, ProgramState,
     SingleRowAddress,
 };
-use crate::prada::{rows::Row, BitwiseOperand};
+use crate::prada::{architecture::{RowAddress, SubarrayId}, program::{Address, Program, ProgramState}, rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cmp::max;
+use std::{cmp::max, collections::HashMap};
+
+/// Stores the current state of a row at a concrete compilations step
+#[derive(Default)] // by default not a compute_row, no live-value and no constant inside row
+pub struct RowState {
+    /// `compute_rows` are reservered rows which solely exist for performing computations, see [`Compiler::compute_row_activations`]
+    is_compute_row: bool,
+    /// `None` if the value inside this row is currently not live
+    live_value: Option<Signal>,
+    /// Mostly 0s/1s (for initializing reference subarray), see [`CompilationState::constant_values`]
+    constant: Option<usize>,
+}
 
 pub struct CompilationState<'a, 'n, N> {
+    /// For each row in the dram-module store its state (whether it's a compute row or if not whether/which value is stored inside it
+    dram_state: HashMap<RowAddress, RowState>,
+    /// For each subarray it stores the row in which the `Signal` is located
+    value_states: HashMap<(Signal, SubarrayId), RowAddress>,
+
     network: &'n N,
     /// contains all not yet computed network nodes that can be immediately computed (i.e. all
     /// inputs of the node are already computed)
@@ -85,7 +100,6 @@ pub fn compile<'a>(
             .signal_copy(output_sig, SingleRowAddress::Out(idx as u64));
     }
     let mut program = state.program.into();
-    optimize(&mut program);
     Ok(program)
 }
 
@@ -109,6 +123,8 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
         let program = ProgramState::new(architecture, network);
         let outputs = network.outputs().map(|sig| sig.node_id()).collect();
         Self {
+            dram_state: HashMap::new(),
+            value_states: HashMap::new(),
             network,
             candidates,
             program,
@@ -132,42 +148,13 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'a, 'n, N
         };
 
         // select which MAJ instruction to use
-        // for this we use the operation with has the most already correctly placed operands
-        let mut opt = None;
-        for id in self.architecture().maj_ops.iter().copied() {
-            let operands = self.architecture().multi_activations[id]
-                .as_slice()
-                .try_into()
-                .expect("maj has to have 3 operands");
-            let (matches, match_no) = self.get_mapping(&mut signals, operands);
-            let spilling_cost = self.spilling_cost(operands, &matches);
-            let cost = 3.0 - match_no as f32 + 0.5 * spilling_cost as f32;
-            let is_opt = match &opt {
-                None => true,
-                Some((opt_no, _, _, _)) => *opt_no > cost,
-            };
-            if is_opt {
-                opt = Some((cost, id, matches, signals));
-            }
-        }
-        let (_, maj_id, matches, signals) = opt.unwrap();
-        let operands = &self.architecture().multi_activations[maj_id];
+        todo!();
 
         // now we need to place the remaining non-matching operands...
 
-
-        // then we can copy the signals into their places
-        for i in 0..3 {
-            if matches[i] {
-                continue;
-            }
-            self.program
-                .signal_copy(signals[i], SingleRowAddress::Bitwise(operands[i]));
-        }
-
         // all signals are in place, now we can perform the MAJ operation
-        self.program
-            .maj(maj_id, Signal::new(id, false), out_address);
+        // self.program
+        //     .maj(maj_id, Signal::new(id, false), out_address);
 
         // free up rows if possible
         // (1) for the MAJ-signal

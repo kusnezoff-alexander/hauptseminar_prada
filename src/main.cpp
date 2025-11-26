@@ -28,7 +28,8 @@ int main()
       .rewrite = true,
   };
 
-  auto [out, result] = ambit_rewrite( settings, in );
+  // auto [out, result] = ambit_rewrite( settings, in );
+  auto [out, result] = prada_rewrite( settings, in );
   std::cout << "IC:" << result.instruction_count << std::endl;
   std::cout << "t1:" << result.t_runner << std::endl;
   std::cout << "t2:" << result.t_extractor << std::endl;

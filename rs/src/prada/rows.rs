@@ -83,7 +83,7 @@ impl<'a> Rows<'a> {
     /// Returns the signal of the given operand. That is, if it is a DCC operand the signal of the
     /// respective DCC row, but inverted if the address refers to the inverted row, otherwise the
     /// signal of the row of the operand.
-    pub fn get_operand_signal(&self) -> Option<Signal> {
+    pub fn get_operand_signal(&self, operand: BitwiseOperand) -> Option<Signal> {
         // self.get_address_signal(operand.into())
         todo!()
     }
@@ -170,3 +170,8 @@ impl<'a> Rows<'a> {
     }
 }
 
+impl From<BitwiseRow> for Row {
+    fn from(value: BitwiseRow) -> Self {
+        Self::Bitwise(value)
+    }
+}

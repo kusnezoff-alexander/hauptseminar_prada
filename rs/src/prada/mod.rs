@@ -1,7 +1,6 @@
 mod architecture;
 mod compilation;
 mod extraction;
-mod optimization;
 mod program;
 mod rows;
 
