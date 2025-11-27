@@ -181,8 +181,16 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
             let next_row = free_rows_per_subarray.pop().expect("No more free rows");
             match node {
                 Mig::Input(i) => {
+                    println!("Input {id:?} placed in row {next_row}");
+                    // TODO: check whether inverted or non-inverted version is needed and place only
+                    // that one
                     let row_state = RowState{ is_compute_row: false, live_value: Some(Signal::new(id, false)), constant: None };
                     value_states.insert(Signal::new(id, false), next_row);
+                    dram_state.insert(next_row, row_state);
+
+                    let next_row = free_rows_per_subarray.pop().expect("No more free rows");
+                    let row_state = RowState{ is_compute_row: false, live_value: Some(Signal::new(id, true)), constant: None };
+                    value_states.insert(Signal::new(id, true), next_row);
                     dram_state.insert(next_row, row_state);
                 }
                 Mig::False => {
