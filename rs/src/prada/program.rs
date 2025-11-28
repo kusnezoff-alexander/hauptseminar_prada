@@ -26,6 +26,8 @@ impl Instruction {
 pub struct Program<'a> {
     pub architecture: &'a PRADAArchitecture,
     pub instructions: Vec<Instruction>,
+    pub runtime_estimate: u64,
+    pub energy_consumption_estimate: u64,
 }
 
 impl<'a> Program<'a> {
@@ -33,6 +35,8 @@ impl<'a> Program<'a> {
         Self {
             architecture,
             instructions,
+            runtime_estimate: 0,
+            energy_consumption_estimate: 0,
         }
     }
 }

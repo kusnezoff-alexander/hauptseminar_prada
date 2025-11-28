@@ -1,7 +1,7 @@
 use super::{
     architecture::{PRADAArchitecture},
 };
-use crate::prada::{architecture::{RowAddress, SubarrayId, ARCHITECTURE, ROWS_PER_SUBARRAY}, program::{Instruction, Program}, rows::Row, BitwiseOperand};
+use crate::prada::{architecture::{RowAddress, SubarrayId, ARCHITECTURE, ROWS_PER_SUBARRAY}, extraction::CompilingCost, program::{Instruction, Program}, rows::Row, BitwiseOperand};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
 use log::debug;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -48,7 +48,7 @@ pub fn compile<'a>(
     // init candidates, dram_state etc.
     let mut state = CompilationState::new(architecture, network);
 
-    dbg!("{:?}", state.value_states.clone());
+    // dbg!("{:?}", state.value_states.clone());
 
     while !state.candidates.is_empty() {
         // choose next candidate
@@ -124,7 +124,17 @@ pub fn compile<'a>(
     //         .program
     //         .signal_copy(output_sig, RowAddress(idx as u64));
     // }
-    let program = Program { architecture: &ARCHITECTURE , instructions: state.program };
+
+    let CompilingCost{ runtime,  energy_consumption} = state.program.iter().map(|instr| {
+        match instr {
+            Instruction::N(_) => CompilingCost { runtime: 35, energy_consumption: 100},
+            Instruction::AAPTRA(_,_,_) => CompilingCost { runtime: 49, energy_consumption: 150},
+            Instruction::AAPRowCopy(_,_) => CompilingCost { runtime: 100, energy_consumption: 50},
+        }
+    }).sum();
+
+
+    let program = Program { architecture: &ARCHITECTURE , instructions: state.program, runtime_estimate: runtime, energy_consumption_estimate: energy_consumption };
     Ok(program)
 }
 
@@ -218,7 +228,7 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
 
     /// Actually compute the operation behind `node` and store it into `out_address`
     pub fn compute(&mut self, id: Id, node: Mig, out_address: Option<RowAddress>) {
-        dbg!("Candidates: {:?}", &self.candidates);
+        // dbg!("Candidates: {:?}", &self.candidates);
         if !self.candidates.remove(&(id, node)) {
             panic!("not a candidate");
         }

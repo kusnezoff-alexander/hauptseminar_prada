@@ -36,7 +36,9 @@ int main()
 
   // auto [out, result] = ambit_rewrite( settings, in );
   auto [out, result] = prada_rewrite( settings, in );
-  std::cout << "IC:" << result.instruction_count << std::endl;
+  std::cout << "Instruction Count:" << result.instruction_count << std::endl;
+  std::cout << "Runtime Estimate:" << result.runtime_estimate << std::endl;
+  std::cout << "Energy Consumption Estimate:" << result.energy_consumption_estimate << std::endl;
   std::cout << "t1:" << result.t_runner << std::endl;
   std::cout << "t2:" << result.t_extractor << std::endl;
   std::cout << "t3:" << result.t_compiler << std::endl;

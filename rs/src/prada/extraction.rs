@@ -3,16 +3,21 @@ use crate::prada::architecture::PRADAArchitecture;
 use eggmock::egg::{Analysis, EClass, Id, Language};
 use eggmock::{EggIdToSignal, Mig, MigLanguage, Network, NetworkLanguage, Signal};
 use std::cmp::{max, Ordering};
-use std::iter;
+use std::iter::Sum;
+use std::{iter, ops};
 use std::rc::Rc;
 
 pub struct CompilingCostFunction<'a> {
     pub architecture: &'a PRADAArchitecture,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Copy,Clone)]
 pub struct CompilingCost {
-    program_cost: usize,
+    /// in ns (lower is better)
+    /// estimated by summing up all latencies
+    pub runtime: u64,
+    /// in mJ/KOps (lower is better)
+    pub energy_consumption: u64,
 }
 
 impl<A: Analysis<MigLanguage>> OptCostFunction<MigLanguage, A> for CompilingCostFunction<'_> {
@@ -33,66 +38,63 @@ impl<A: Analysis<MigLanguage>> OptCostFunction<MigLanguage, A> for CompilingCost
             return None;
         }
         let root = enode.clone();
-        let cost = match enode {
+        let op_cost = match enode {
             MigLanguage::False | MigLanguage::Input(_) => CompilingCost::leaf(root),
-            MigLanguage::Not(id) => {
-                let cost = costs(*id);
-
-                CompilingCost::with_children(
-                    self.architecture,
-                    root,
-                    iter::once((*id, cost)),
-                )?
+            MigLanguage::Not(_) => {
+                CompilingCost {
+                    runtime: 35,
+                    energy_consumption: 100,
+                }
             }
-            MigLanguage::Maj(children) => CompilingCost::with_children(
-                self.architecture,
-                root,
-                children.map(|id| (id, costs(id))),
-            )?,
+            MigLanguage::Maj(_) => CompilingCost {
+                runtime: 49,
+                energy_consumption: 150,
+            },
         };
-        Some(Rc::new(cost))
+        Some(Rc::new(enode.fold(op_cost, |sum, id| sum + *(costs(id)))))
     }
 }
 
 impl CompilingCost {
     pub fn leaf(root: MigLanguage) -> Self {
         Self {
-            program_cost: 0,
+            runtime: 0,
+            energy_consumption: 0
         }
     }
-    pub fn with_children(
-        architecture: &PRADAArchitecture,
-        root: MigLanguage,
-        child_costs: impl IntoIterator<Item = (Id, Rc<CompilingCost>)>,
-    ) -> Option<Self> {
-        // let child_graphs = child_costs
-        //     .into_iter()
-        //     .map(|(id, cost)| cost.collapsed_graph(id));
-        // let partial_graph = StackedPartialGraph::new(root, child_graphs);
-        // let program_cost = match compile(architecture, &partial_graph.with_backward_edges()) {
-        //     Err(_) => return None,
-        //     Ok(program) => program.instructions.len(),
-        // };
-        // Self {
-        //     partial: RefCell::new(Either::Left(partial_graph)),
-        //     not_nesting,
-        //     program_cost,
-        // }
-        // .into()
-        println!("TODO: compiling cost");
-        // None
-        Some(CompilingCost{program_cost: 1})
+}
+
+/// Needed to implement `enode.fold()` for computing overall cost from node together with its children
+impl ops::Add<CompilingCost> for CompilingCost {
+    type Output = CompilingCost;
+
+    fn add(self, rhs: CompilingCost) -> Self::Output {
+        CompilingCost {
+            // both values are monotonically increasing
+            runtime: self.runtime + rhs.runtime, // monotonically decreasing
+            energy_consumption: self.energy_consumption + rhs.energy_consumption,
+        }
+    }
+}
+
+impl Sum for CompilingCost {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(CompilingCost{runtime: 0, energy_consumption: 0 }, |acc, x| CompilingCost{ runtime: acc.runtime + x.runtime, energy_consumption: acc.energy_consumption + x.energy_consumption })
     }
 }
 
 impl PartialEq for CompilingCost {
     fn eq(&self, other: &Self) -> bool {
-        self.program_cost.eq(&other.program_cost)
+        self.runtime.eq(&other.runtime) & self.energy_consumption.eq(&other.energy_consumption)
     }
 }
 
 impl PartialOrd for CompilingCost {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.program_cost.partial_cmp(&other.program_cost)
+        if self.runtime.eq(&other.runtime) {
+            self.energy_consumption.partial_cmp(&other.energy_consumption)
+        } else {
+            self.runtime.partial_cmp(&other.runtime)
+        }
     }
 }

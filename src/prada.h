@@ -17,6 +17,8 @@ extern "C"
     uint64_t egraph_size;
 
     uint64_t instruction_count;
+    uint64_t runtime_estimate;
+    uint64_t energy_consumption_estimate;
 
     uint64_t t_runner;
     uint64_t t_extractor;

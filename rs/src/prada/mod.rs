@@ -142,6 +142,8 @@ struct CompilerStatistics {
     egraph_size: u64,
 
     instruction_count: u64,
+    runtime_estimate: u64,
+    energy_consumption_estimate: u64,
 
     t_runner: u64,
     t_extractor: u64,
@@ -177,6 +179,8 @@ impl CompilerStatistics {
             egraph_nodes: graph.total_number_of_nodes() as u64,
             egraph_size: graph.total_size() as u64,
             instruction_count: res.output.borrow_program().instructions.len() as u64,
+            runtime_estimate: res.output.borrow_program().runtime_estimate,
+            energy_consumption_estimate: res.output.borrow_program().energy_consumption_estimate,
             t_runner: res.t_runner as u64,
             t_extractor: res.t_extractor as u64,
             t_compiler: res.t_compiler as u64,
