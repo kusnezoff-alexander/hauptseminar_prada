@@ -1,11 +1,10 @@
 use super::{
     architecture::{PRADAArchitecture},
 };
-use crate::prada::{architecture::{RowAddress, SubarrayId, ARCHITECTURE, ROWS_PER_SUBARRAY}, extraction::CompilingCost, program::{Instruction, Program}, rows::Row, BitwiseOperand};
+use crate::prada::{architecture::{RowAddress, ARCHITECTURE, ROWS_PER_SUBARRAY}, extraction::CompilingCost, program::{Instruction, Program}};
 use eggmock::{Id, Mig, NetworkWithBackwardEdges, Node, Signal};
-use log::debug;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{cmp::max, collections::HashMap, u64::MAX};
+use std::collections::HashMap;
 
 /// Stores the current state of a row at a concrete compilations step
 #[derive(Default)] // by default not a compute_row, no live-value and no constant inside row
@@ -73,44 +72,72 @@ pub fn compile<'a>(
             .min_by_key(|(_, _, not_present, outputs, output)| (*not_present, *outputs, !output))
             .unwrap();
 
-        if state.outputs.contains(&id) {
-            for (output, signal) in network.outputs().enumerate() {
-                if signal.node_id() != id {
-                    continue;
-                }
-                if signal.is_inverted() {
-                    let backup_row = state.free_rows_per_subarray.pop().expect("No empty rows anymore");
-                    let orig_row = *state.value_states.get(&signal.invert()).expect("Non-inverted version of signal isnt present too");
+        // if state.outputs.contains(&id) {
+        //     println!("Computing outputs...");
+        //     for (output, signal) in network.outputs().enumerate() {
+        //         if signal.node_id() != id {
+        //             continue;
+        //         }
+        //         if signal.is_inverted() && !state.value_states.contains_key(&signal) {
+        //             let backup_row = state.free_rows_per_subarray.pop().expect("No empty rows anymore");
+        //             let orig_row = *state.value_states.get(&signal.invert()).unwrap_or_else(|| panic!("Non-inverted version of signal {signal:?} isnt present too"));
+        //
+        //             // for now let's save the original (non-inverted) value in another row - TODO:
+        //             // check if signal is ever needed again and only then do this
+        //             state.program.push(Instruction::AAPRowCopy(orig_row, backup_row)); // first save in backup_row
+        //             state.program.push(Instruction::N(backup_row)); // then negate
+        //             state.value_states.insert(signal, orig_row); // inv signal is now stored where non-inv sig was previously
+        //             state.dram_state.insert(orig_row, RowState{ is_compute_row: false, live_value: Some(signal.invert()), constant: None});
+        //             state.dram_state.insert(backup_row, RowState{ is_compute_row: false, live_value: Some(signal), constant: None});
+        //
+        //             state.compute(id, node, None);
+        //         } else {
+        //             state.compute(id, node, Some(RowAddress(output as u64)));
+        //         }
+        //     }
+        //     state.outputs.remove(&id);
+        //
+        //     // free rows if node isn't needed for further computations
+        //     let leftover_uses = *state.leftover_use_count(id);
+        //     if leftover_uses == 1 {
+        //         for signal in network.node(id).inputs() {
+        //             let row= state.value_states.remove(signal);
+        //             if let Some(row_addr) = row {
+        //                 state.dram_state.remove(&row_addr);
+        //                 state.free_rows_per_subarray.push(row_addr);
+        //             }
+        //         }
+        //     }
+        // } else {
+        state.compute(id, node, None);
+        // }
+    }
 
-                    // for now let's save the original (non-inverted) value in another row - TODO:
-                    // check if signal is ever needed again and only then do this
-                    state.program.push(Instruction::AAPRowCopy(orig_row, backup_row)); // first save in backup_row
-                    state.program.push(Instruction::N(backup_row)); // then negate
-                    state.value_states.insert(signal, orig_row); // inv signal is now stored where non-inv sig was previously
-                    state.dram_state.insert(orig_row, RowState{ is_compute_row: false, live_value: Some(signal.invert()), constant: None});
-                    state.dram_state.insert(backup_row, RowState{ is_compute_row: false, live_value: Some(signal), constant: None});
-
-                    let row_addr = state.value_states.get(&signal).expect("Signal is not computed...");
-                    state.compute(id, node, None);
-                } else {
-                    state.compute(id, node, Some(RowAddress(output as u64)));
-                }
-            }
-            state.outputs.remove(&id);
-
-            // free rows if node isn't needed for further computations
-            let leftover_uses = *state.leftover_use_count(id);
-            if leftover_uses == 1 {
-                for signal in network.node(id).inputs() {
-                    let row= state.value_states.remove(signal);
-                    if let Some(row_addr) = row {
-                        state.dram_state.remove(&row_addr);
-                        state.free_rows_per_subarray.push(row_addr);
-                    }
-                }
-            }
+    // print in which rows the outputs have been placed
+    for output in network.outputs() {
+        if let Some(row) = state.value_states.get(&output) {
+            println!("Output {output:?} in row {row}");
         } else {
-            state.compute(id, node, None);
+            // check if inverted signal of `output` is there
+            let row = if let Some(&inv_sig_row) = state.value_states.get(&output.invert()) {
+                if !network.outputs().any(|o| o == output.invert()) {
+                    state.program.push(Instruction::N(inv_sig_row));
+                    state.value_states.remove(&output);
+                    state.value_states.insert(output.invert(), inv_sig_row);
+                    state.dram_state.insert(inv_sig_row, RowState{ is_compute_row: false, live_value: Some(output.invert()), constant: None});
+                    inv_sig_row
+                } else {
+                    // if inverted signal is also an output we can't just overwrite it and have to
+                    // save it in a separate row
+                    let free_row = state.free_rows_per_subarray.pop().expect("OOM");
+                    state.program.push(Instruction::AAPRowCopy(inv_sig_row, free_row));
+                    state.program.push(Instruction::N(free_row));
+                    inv_sig_row
+                }
+            } else {
+                panic!("Output {output:?} nor its inverse are in a row??");
+            };
+            println!("Output {output:?} in row {row}");
         }
     }
 
@@ -133,6 +160,7 @@ pub fn compile<'a>(
         }
     }).sum();
 
+    // println!("{:?}", state.program);
 
     let program = Program { architecture: &ARCHITECTURE , instructions: state.program, runtime_estimate: runtime, energy_consumption_estimate: energy_consumption };
     Ok(program)
@@ -228,24 +256,61 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
 
     /// Actually compute the operation behind `node` and store it into `out_address`
     pub fn compute(&mut self, id: Id, node: Mig, out_address: Option<RowAddress>) {
+        // dbg!("Computing {:?}", id);
         // dbg!("Candidates: {:?}", &self.candidates);
         if !self.candidates.remove(&(id, node)) {
             panic!("not a candidate");
         }
-        let Mig::Maj(mut signals) = node else {
+        let Mig::Maj(signals) = node else {
             panic!("can only compute majs")
         };
 
-        // now we need to place the remaining non-matching operands...
-        // TODO: perform actual computation
+        // get row addresses of require input operands
         let row_addresses: Vec<RowAddress> = signals.iter().map(|signal|
-            *self.value_states.get(signal).unwrap_or_else(|| panic!("Input Signal {signal:?} not present. Why is {id:?} a candidate then?"))
+            if !self.value_states.contains_key(signal) {
+                if let Some(row_inv_sig) = self.value_states.get(&signal.invert()) {
+                    // if signal isn't there, first create it using the inverted signal
+                    let free_row = self.free_rows_per_subarray.pop().expect("OOM");
+                    self.program.push(Instruction::AAPRowCopy(*row_inv_sig, free_row));
+                    self.program.push(Instruction::N(free_row));
+
+                    self.value_states.insert(*signal, free_row);
+                    self.dram_state.insert(free_row, RowState { is_compute_row: false, live_value: Some(*signal), constant: None});
+                    free_row
+                } else {
+                    panic!("Input Signal {signal:?} nor its inverted version are present. Why is {id:?} a candidate then?");
+                }
+            } else {
+                *self.value_states.get(signal).unwrap()
+            }
         ).collect();
-        // TODO: move values into safe rows if they're needed in future (=still live)
+
+
+        // update `leftover_use_count` of parent of this signal & free row if operand is not needed
+        // anymore
+        if ! self.network.outputs().any(|x| x.node_id() == id) {
+            self.network.node_outputs(id).for_each(|parent| {
+                self.leftover_use_count.entry(parent).and_modify(|v| *v -= 1);
+                if self.leftover_use_count.get(&parent) == Some(&1) {
+                    if let Some(row) = self.value_states.remove(&Signal::new(parent, false)) {
+                        self.dram_state.remove(&row);
+                        self.free_rows_per_subarray.push(row);
+                    }
+                    if let Some(row) = self.value_states.remove(&Signal::new(parent, true)) {
+                        self.dram_state.remove(&row);
+                        self.free_rows_per_subarray.push(row);
+                    }
+                }
+            });
+        }
+
+        // move values into safe rows if they're needed in future (=still live)
         for signal in signals {
             if *self.leftover_use_count(signal.node_id()) > 1  {
                 let next_free_row = self.free_rows_per_subarray.pop().expect("OOM");
-                let row_addr = *self.value_states.get(&signal).expect("Input Signal not present. Why is {id} a candidate then?");
+                let row_addr = *self.value_states.get(&signal).unwrap_or_else(|| panic!("Input Signal with node-id={:?} not present. Why is {id:?} a candidate then?", signal.node_id()));
+                self.value_states.insert(signal, next_free_row);
+                self.dram_state.insert(next_free_row, RowState { is_compute_row: false, live_value: Some(signal), constant: None});
                 self.program.push(Instruction::AAPRowCopy(row_addr, next_free_row));
             }
         }
@@ -265,7 +330,7 @@ impl<'a, 'n, N: NetworkWithBackwardEdges<Node = Mig>> CompilationState<'n, N> {
             if parent_node
                 .inputs()
                 .iter()
-                .all(|s| self.value_states.contains_key(s))
+                .all(|s| self.value_states.contains_key(s) || self.value_states.contains_key(&s.invert()))
             {
                 self.candidates.insert((parent_id, parent_node));
             }

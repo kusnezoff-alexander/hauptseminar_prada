@@ -1,10 +1,10 @@
 use crate::opt_extractor::OptCostFunction;
 use crate::prada::architecture::PRADAArchitecture;
 use eggmock::egg::{Analysis, EClass, Id, Language};
-use eggmock::{EggIdToSignal, Mig, MigLanguage, Network, NetworkLanguage, Signal};
-use std::cmp::{max, Ordering};
+use eggmock::MigLanguage;
+use std::cmp::Ordering;
 use std::iter::Sum;
-use std::{iter, ops};
+use std::ops;
 use std::rc::Rc;
 
 pub struct CompilingCostFunction<'a> {

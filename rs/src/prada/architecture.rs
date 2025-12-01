@@ -82,7 +82,7 @@ impl SubarrayId {
     /// in a compute/reference subarray "relation" with exactly one other neighboring subarray.
     /// This function returns that other partner (compute/reference) subarray
     pub fn get_partner_subarray(&self) -> Self {
-        if self.0 % 2 == 0 {
+        if self.0.is_multiple_of(2) {
             SubarrayId(self.0 + 1)
         } else {
             SubarrayId(self.0 - 1)

@@ -33,7 +33,8 @@ int main( int const argc, char** argv )
 
   auto constexpr settings = ambit_compiler_settings{
       .print_program = false,
-      .verbose = false,
+      // .verbose = false,
+      .verbose = true, // to look at the generated programs
   };
 
   const auto [egraph_classes, egraph_nodes, egraph_size,

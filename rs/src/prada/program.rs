@@ -1,6 +1,6 @@
 use crate::prada::architecture::{PRADAArchitecture, RowAddress};
 
-use super::{BitwiseOperand, BitwiseRow, Row, Rows};
+use super::{BitwiseOperand, BitwiseRow};
 use std::fmt::{Display, Formatter};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -61,20 +61,6 @@ impl Instruction {
             Instruction::N(a) => vec!(*a).into_iter(),
         }
     }
-
-    /// Return which rows are to be overridden
-    pub fn overridden_rows<'a>(
-        &self,
-        architecture: &'a PRADAArchitecture,
-    ) -> impl Iterator<Item = Row> + 'a {
-        return vec!().into_iter();
-        todo!();
-        // match self {
-        //     Instruction::AAPRowCopy(from, _) => vec!(*from).into_iter(),
-        //     Instruction::AAPTRA(a, b, c ) => vec!(*a,*b,*c).into_iter(),
-        //     Instruction::N(a) => vec!(*a).into_iter(),
-        // }
-    }
 }
 
 impl From<BitwiseRow> for BitwiseOperand {
@@ -87,12 +73,6 @@ impl From<BitwiseRow> for BitwiseOperand {
 
 impl Display for Program<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let write_operand = |f: &mut Formatter<'_>, o: &BitwiseOperand| -> std::fmt::Result {
-            match o {
-                BitwiseOperand::T(t) => write!(f, "T{t}"),
-            }
-        };
-
         for instruction in &self.instructions {
             match instruction {
                 Instruction::AAPRowCopy(a, b) => {
@@ -105,7 +85,10 @@ impl Display for Program<'_> {
                     write!(f, " {b} {c}")?;
                     writeln!(f)?;
                 },
-                _ => todo!(),
+                Instruction::N(a) => {
+                    write!(f, "N {a}")?;
+                    writeln!(f)?;
+                },
             }
         }
         Ok(())
